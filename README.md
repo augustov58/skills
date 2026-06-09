@@ -7,6 +7,7 @@ A collection of Claude Code skills.
 | Skill | Category | Description |
 |-------|----------|-------------|
 | [llm-wiki](research/llm-wiki/) | research | Karpathy's LLM Wiki — build and maintain a persistent, interlinked markdown knowledge base. Ingest sources, query compiled knowledge, and lint for consistency. |
+| [transformer-sizing-design](electrical/transformer-sizing-design/) | electrical | Size and design a complete dry-type transformer installation per NEC 2023 — kVA selection, OCPD (Table 450.3(B)), secondary tap rules, SDS grounding, and installation clearances. Intake-driven, with a deterministic sizing calculator. |
 
 ## Layout
 
