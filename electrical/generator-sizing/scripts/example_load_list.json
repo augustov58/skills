@@ -1,0 +1,87 @@
+{
+  "params": {
+    "gen_pf": 0.8,
+    "dip_target_pct": 20,
+    "altitude_ft": 100,
+    "ambient_c": 35,
+    "harmonic_load_fraction": 0.1,
+    "spare_fraction": 0.2
+  },
+  "loads": [
+    {
+      "name": "Egress lighting",
+      "category": "emergency",
+      "kind": "static",
+      "kw": 25,
+      "pf": 0.95,
+      "qty": 1,
+      "demand_factor": 1.0,
+      "on_generator": true
+    },
+    {
+      "name": "Fire alarm + smoke control",
+      "category": "emergency",
+      "kind": "static",
+      "kw": 15,
+      "pf": 0.9,
+      "qty": 1,
+      "demand_factor": 1.0,
+      "on_generator": true
+    },
+    {
+      "name": "Elevator (egress)",
+      "category": "emergency",
+      "kind": "motor",
+      "hp": 40,
+      "voltage": 480,
+      "code_letter": "H",
+      "efficiency": 0.92,
+      "load_factor": 1.0,
+      "start_method": "vfd",
+      "pf_running": 0.85,
+      "qty": 1,
+      "demand_factor": 1.0,
+      "on_generator": true
+    },
+    {
+      "name": "Chilled water pump",
+      "category": "optional",
+      "kind": "motor",
+      "hp": 75,
+      "voltage": 480,
+      "code_letter": "G",
+      "efficiency": 0.93,
+      "load_factor": 0.9,
+      "start_method": "wye-delta",
+      "pf_running": 0.86,
+      "qty": 1,
+      "demand_factor": 1.0,
+      "on_generator": true
+    },
+    {
+      "name": "Cooling tower fan",
+      "category": "optional",
+      "kind": "motor",
+      "hp": 30,
+      "voltage": 480,
+      "code_letter": "G",
+      "efficiency": 0.9,
+      "load_factor": 1.0,
+      "start_method": "dol",
+      "pf_running": 0.84,
+      "qty": 2,
+      "demand_factor": 1.0,
+      "on_generator": true
+    },
+    {
+      "name": "Receptacle / misc",
+      "category": "optional",
+      "kind": "static",
+      "kw": 60,
+      "pf": 0.9,
+      "qty": 1,
+      "demand_factor": 0.6,
+      "on_generator": true
+    }
+  ]
+}
