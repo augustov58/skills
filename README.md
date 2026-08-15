@@ -86,3 +86,9 @@ Two rules follow from that, for anyone adding to this repo:
 - Never put a `SKILL.md` at the repository root. It short-circuits discovery
   and hides everything else.
 - Keep skills at `skills/<category>/<name>/SKILL.md`.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The `llm-wiki` skill implements a pattern
+described by [Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c1b7b1f6c58);
+the implementation here is original.
