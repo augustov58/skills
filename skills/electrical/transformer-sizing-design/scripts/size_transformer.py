@@ -280,13 +280,55 @@ def _shared_row(cond_label, conductor):
     return None
 
 
+# 250.66(A)/(B)/(C) caps by electrode type, as (copper, aluminum).
+# None = the code states no cap for that material, so the full table applies.
+ELECTRODE_CAP = {
+    "rod":   ("6 AWG", "4 AWG"),   # 250.66(A), electrode per 250.52(A)(5)
+    "plate": ("6 AWG", "4 AWG"),   # 250.66(A), electrode per 250.52(A)(7)
+    "ufer":  ("4 AWG", None),      # 250.66(B); the code names COPPER only
+    "ring":  (None, None),         # 250.66(C); the cap is the ring conductor itself
+    "water": (None, None),         # 250.52(A)(1) -- no cap, full table
+    "steel": (None, None),         # 250.52(A)(2) -- no cap, full table
+}
+
+
+def apply_electrode_cap(gec, electrode, conductor, ring_size):
+    """250.66(A)/(B)/(C). Returns (size, note, flag).
+
+    Every one of these caps is conditional on the run NOT extending on to another
+    electrode type that requires a larger conductor, so a cap that fires always
+    comes with that condition attached.
+    """
+    if electrode == "unspecified":
+        return gec, None, ("Electrode type not given (--electrode): the full Table 250.66 GEC is "
+                           "shown. 250.66(A)/(B)/(C) may permit a smaller conductor to a rod, "
+                           "plate, concrete-encased electrode, or ground ring.")
+    if electrode == "ring":
+        if not ring_size:
+            return gec, None, ("--electrode ring without --ring-size: 250.66(C) caps the GEC at "
+                               "the ring conductor size, which is not known. The ring itself is "
+                               "at least 2 AWG bare copper per 250.52(A)(4).")
+        if _cmil(ring_size) < _cmil(gec):
+            return ring_size, "250.66(C): capped at the %s ground-ring conductor." % ring_size, None
+        return gec, None, None
+
+    cap = ELECTRODE_CAP[electrode][0 if conductor == "cu" else 1]
+    if cap is None:
+        if electrode == "ufer" and conductor == "al":
+            return gec, None, ("250.66(B) names only 4 AWG COPPER for a concrete-encased "
+                               "electrode - there is no aluminum figure - so no cap was applied.")
+        return gec, None, None
+    if _cmil(cap) < _cmil(gec):
+        sub = "A" if electrode in ("rod", "plate") else "B"
+        return cap, "250.66(%s): capped at %s for a %s electrode." % (sub, cap, electrode), None
+    return gec, None, None
+
+
 def gec_size(cond_label, conductor):
     """Table 250.66. Above the last row it is a FLAT cap -- 250.66 never escalates.
 
-    The 250.66(A)/(B)/(C) electrode caps (6 AWG to a rod, 4 AWG to a
-    concrete-encased electrode, ring size to a ground ring) are NOT applied here;
-    they depend on the electrode type and on the run not continuing on to another
-    electrode, neither of which this script asks about yet.
+    This is the table value only; the 250.66(A)/(B)/(C) electrode caps are applied
+    separately by apply_electrode_cap() because they depend on the electrode type.
     """
     hit = _shared_row(cond_label, conductor)
     if hit:
@@ -441,6 +483,15 @@ def main():
     p.add_argument("--load-tag", default="LP", help="downstream (secondary) panel tag")
     p.add_argument("--primary-conn", default=None, help="primary connection label (e.g. Delta); default inferred")
     p.add_argument("--secondary-conn", default=None, help="secondary connection label (e.g. Y); default inferred")
+    p.add_argument("--electrode",
+                   choices=["unspecified", "rod", "plate", "ufer", "ring", "water", "steel"],
+                   default="unspecified",
+                   help="grounding electrode this GEC lands on, for the 250.66(A)/(B)/(C) caps. "
+                        "Default 'unspecified' applies NO cap and shows the full Table 250.66 "
+                        "value, which is what earlier versions did")
+    p.add_argument("--ring-size", default=None,
+                   help="ground-ring conductor size (e.g. '2 AWG'), required by 250.66(C) when "
+                        "--electrode ring")
     p.add_argument("--egc-baseline", choices=["load", "ocpd"], default="load",
                    help="250.122(B) baseline. 'load' (default) = minimum conductor for the "
                         "calculated load, the conservative reading; 'ocpd' = minimum conductor "
@@ -626,7 +677,22 @@ def main():
     # GEC -> 250.66 via 250.30(A)(5).  SBJ -> Table 250.102(C)(1) via the chain
     # 250.30(A)(1) -> 250.28(D)(1) (250.30(A)(1) never names the table itself).
     # SSBJ -> 250.102(C) via 250.30(A)(2), on the derived ungrounded conductors.
-    gec = gec_size(sec_cond, args.conductor)
+    gec_table = gec_size(sec_cond, args.conductor)
+    gec, gec_cap_note, gec_cap_flag = apply_electrode_cap(
+        gec_table, args.electrode, args.conductor, args.ring_size)
+    if gec_cap_note:
+        assumptions.append(gec_cap_note + " Table value before the cap was %s." % gec_table)
+        flags.append("GEC capped by electrode type: the 250.66(%s) allowance applies ONLY if this "
+                     "run does not extend on to another electrode type requiring a larger "
+                     "conductor. Confirm the electrode arrangement."
+                     % ("C" if args.electrode == "ring" else
+                        "A" if args.electrode in ("rod", "plate") else "B"))
+    if gec_cap_flag:
+        flags.append(gec_cap_flag)
+    if args.conductor == "al" and args.electrode in ("rod", "plate", "ufer", "ring"):
+        flags.append("Aluminum GEC to an in-earth electrode: 250.64(A) bars aluminum within 18 in "
+                     "of earth and where in direct contact with masonry or subject to corrosive "
+                     "conditions. Verify the termination detail or run copper.")
     sbj = sbj_size(sec_cond, args.conductor)
     ssbj = sbj_size(sec_cond, args.conductor)
     assumptions.append("SSBJ assumed required: transformer and first disconnecting means taken "
@@ -697,7 +763,8 @@ def main():
                       "cont_load": round(cont_sec_amps, 1) if cont_sec_amps is not None else None,
                       "egc": sec_egc, "egc_note": sec_egc_note},
         "grounding": {"sbj": sbj if sds else None, "gec": gec if sds else None, "sds": sds,
-                      "ssbj": ssbj},
+                      "ssbj": ssbj, "gec_table": gec_table if sds else None,
+                      "electrode": args.electrode},
         "install": (">112.5 kVA: 1-hr fire-rated room (450.21(B))" if kva > 112.5
                     else "<=112.5 kVA: 12 in from combustibles (450.21(A))"),
         "assumptions": assumptions, "flags": flags,
@@ -748,7 +815,9 @@ def main():
     if sds:
         print("GROUNDING (separately derived system, 250.30):")
         print(f"  System bonding jumper:   {sbj}  (250.30(A)(1) -> 250.28(D)(1) -> T250.102(C)(1))")
-        print(f"  Grounding electrode cond:{gec}  (250.30(A)(5) -> Table 250.66)")
+        gec_cite = ("250.30(A)(5) -> Table 250.66" if gec == gec_table
+                    else "250.30(A)(5) -> 250.66; %s table value capped by electrode" % gec_table)
+        print(f"  Grounding electrode cond:{gec}  ({gec_cite})")
         print("  Bond N-G at ONE point (transformer OR secondary disconnect, not both)")
     else:
         print("GROUNDING (NOT separately derived -- 250.30 does NOT apply):")
