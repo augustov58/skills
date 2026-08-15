@@ -180,9 +180,15 @@ def size(loads, gen_pf=GEN_PF, dip_target_pct=20, altitude_ft=0, ambient_c=25,
     required_running_kw = max(c_a_kw, c_b_kw) * (1.0 + spare_fraction)
     required_transient_kw = max(c_c_kw, c_d_kw)
     required_kw_pre_derate = max(required_running_kw, required_transient_kw)
-    raw_vals = [c_a_kw, c_b_kw, c_c_kw, c_d_kw]
-    governing = ["running_kW", "alternator_kVA", "voltage_dip", "block_load_kW"][
-        raw_vals.index(max(raw_vals))]
+    # The label must come from the comparison that actually SET the size. Spare
+    # applies to the running pair only, so the largest RAW constraint can lose to
+    # a smaller one once spare is added -- reporting the raw winner then names a
+    # transient constraint (and offers starting mitigations that save nothing) for
+    # a size that running load drove.
+    if required_running_kw >= required_transient_kw:
+        governing = "running_kW" if c_a_kw >= c_b_kw else "alternator_kVA"
+    else:
+        governing = "voltage_dip" if c_c_kw >= c_d_kw else "block_load_kW"
 
     # Derates applied to OEM rating => we must UPSIZE required by 1/derate
     alt_derate = 1.0
