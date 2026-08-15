@@ -233,6 +233,44 @@ def gec_size(cond_label, conductor):
     return "3/0 AWG" if conductor == "cu" else "250 kcmil"
 
 
+def _is_wye(label):
+    """Loose label test; handles 'Y', 'Wye', '208Y/120', and rejects 'Delta'/'Δ'."""
+    u = (label or "").upper()
+    if "DELTA" in u:
+        return False
+    return "WYE" in u or "STAR" in u or "Y" in u
+
+
+def separately_derived(sds_arg, pri_conn, sec_conn, pri_phase, sec_phase):
+    """Decide 250.30 SDS status from the CONNECTION, not the phase count.
+
+    A separately derived system has no direct electrical connection to the
+    supply conductors, INCLUDING a solidly connected grounded (neutral)
+    conductor. A delta on either side cannot carry a neutral through, so those
+    are always separately derived. Y-Y cannot be settled from ratings alone --
+    a factory H0-X0 link makes it NOT separately derived -- so it is assumed
+    SDS and flagged for nameplate confirmation.
+
+    Returns (sds, assumption, flag); flag is None unless confirmation is due.
+    """
+    if sds_arg == "yes":
+        return True, "SDS: forced by --sds yes; 250.30 applies.", None
+    if sds_arg == "no":
+        return False, ("SDS: forced by --sds no; 250.30 does NOT apply, so no SBJ/GEC at the "
+                       "transformer."), None
+    if pri_phase == 1 or sec_phase == 1:
+        return True, ("SDS: assumed for a 1-phase transformer (no supply neutral carried into the "
+                      "secondary). Pass --sds no if the secondary neutral is bonded to the supply "
+                      "neutral."), None
+    if _is_wye(pri_conn) and _is_wye(sec_conn):
+        return True, "SDS: Y-Y assumed separately derived (see flag).", (
+            "Y-Y connection: a factory H0-X0 neutral link makes this NOT a separately derived "
+            "system -- 250.30 would not apply and the SBJ/GEC below would be wrong. Confirm the "
+            "nameplate and rerun with --sds no if the neutral is carried through.")
+    return True, (f"SDS: {pri_conn}-{sec_conn} carries no supply neutral into the secondary, so it "
+                  f"is separately derived (250.30 applies)."), None
+
+
 def k_factor(nonlinear_pct):
     if nonlinear_pct is None:
         return None, "not specified"
@@ -281,6 +319,9 @@ def main():
     p.add_argument("--load-tag", default="LP", help="downstream (secondary) panel tag")
     p.add_argument("--primary-conn", default=None, help="primary connection label (e.g. Delta); default inferred")
     p.add_argument("--secondary-conn", default=None, help="secondary connection label (e.g. Y); default inferred")
+    p.add_argument("--sds", choices=["auto", "yes", "no"], default="auto",
+                   help="separately derived system (250.30). auto = infer from the connection; "
+                        "pass 'no' for a Y-Y with a factory H0-X0 neutral link")
     args = p.parse_args()
 
     assumptions, flags = [], []
@@ -459,7 +500,11 @@ def main():
                    "480Y/277V" if args.secondary_v == 480 and args.secondary_phase == 3 else
                    f"{args.secondary_v:g}V {sec_conn}")
     pri_v_label = f"{args.primary_v:g}V {pri_conn}"
-    sds = args.primary_phase == 3 and args.secondary_phase == 3  # delta-wye step-down assumption
+    sds, sds_assumption, sds_flag = separately_derived(
+        args.sds, pri_conn, sec_conn, args.primary_phase, args.secondary_phase)
+    assumptions.append(sds_assumption)
+    if sds_flag:
+        flags.append(sds_flag)
 
     result = {
         "tag": args.tag, "source_tag": args.source_tag, "load_tag": args.load_tag,
@@ -478,7 +523,7 @@ def main():
                       "material": args.conductor.upper(), "term": term,
                       "panel_bus": args.panel_bus, "tap_rule": tap_name,
                       "cont_load": round(cont_sec_amps, 1) if cont_sec_amps is not None else None},
-        "grounding": {"sbj": sbj, "gec": gec, "sds": sds},
+        "grounding": {"sbj": sbj if sds else None, "gec": gec if sds else None, "sds": sds},
         "install": (">112.5 kVA: 1-hr fire-rated room (450.21(B))" if kva > 112.5
                     else "<=112.5 kVA: 12 in from combustibles (450.21(A))"),
         "assumptions": assumptions, "flags": flags,
@@ -518,10 +563,15 @@ def main():
         print(f"Tap rule:          {tap_name}")
         print(f"                   {tap_note}")
     print("-" * 66)
-    print("GROUNDING (separately derived system, 250.30):")
-    print(f"  System bonding jumper:   {sbj}  (Table 250.102(C)(1))")
-    print(f"  Grounding electrode cond:{gec}  (Table 250.66)")
-    print("  Bond N-G at ONE point (transformer OR secondary disconnect, not both)")
+    if sds:
+        print("GROUNDING (separately derived system, 250.30):")
+        print(f"  System bonding jumper:   {sbj}  (Table 250.102(C)(1))")
+        print(f"  Grounding electrode cond:{gec}  (Table 250.66)")
+        print("  Bond N-G at ONE point (transformer OR secondary disconnect, not both)")
+    else:
+        print("GROUNDING (NOT separately derived -- 250.30 does NOT apply):")
+        print("  No SBJ and no GEC at the transformer; the secondary neutral stays bonded")
+        print("  to the supply system. Run an EGC with the secondary conductors (250.122).")
     print("=" * 66)
     print("ASSUMPTIONS:")
     for a in assumptions:
