@@ -88,22 +88,45 @@ AMPACITY = [
 SMALL_COND_MAX = {"14 AWG": 15, "12 AWG": 20, "10 AWG": 30}
 
 # ---- GEC, Table 250.66 (by largest ungrounded conductor area) -----------------
-T250_66 = [
-    ("2 AWG", "1/0 AWG", "8 AWG", "6 AWG"),
-    ("1 AWG", "2/0 AWG", "6 AWG", "4 AWG"),
-    ("2/0 AWG", "4/0 AWG", "4 AWG", "2 AWG"),
-    ("3/0 AWG", "4/0 AWG", "4 AWG", "2 AWG"),
-    ("350 kcmil", "500 kcmil", "2 AWG", "1/0 AWG"),
-    ("600 kcmil", "900 kcmil", "1/0 AWG", "3/0 AWG"),
-    ("1100 kcmil", "1750 kcmil", "2/0 AWG", "4/0 AWG"),
-    ("BIG", "BIG", "3/0 AWG", "250 kcmil"),
-]
+# Chapter 9, Table 8 -- circular mil area. 250 kcmil and up are n x 1000 by
+# definition (the printed table em-dashes those cells; that is not missing data).
+CMIL = {
+    "14 AWG": 4110, "12 AWG": 6530, "10 AWG": 10380, "8 AWG": 16510,
+    "6 AWG": 26240, "4 AWG": 41740, "3 AWG": 52620, "2 AWG": 66360,
+    "1 AWG": 83690, "1/0 AWG": 105600, "2/0 AWG": 133100, "3/0 AWG": 167800,
+    "4/0 AWG": 211600,
+}
+for _k in (250, 300, 350, 400, 500, 600, 700, 750, 800, 900, 1000, 1250, 1500, 1750, 2000):
+    CMIL["%d kcmil" % _k] = _k * 1000
+CMIL_ORDER = sorted(CMIL, key=lambda s: CMIL[s])
 
-AREA_RANK = {lbl: i for i, (lbl, *_rest) in enumerate(AMPACITY)}
-AREA_RANK["900 kcmil"] = 98
-AREA_RANK["1100 kcmil"] = 99
-AREA_RANK["1750 kcmil"] = 100
-AREA_RANK["BIG"] = 999
+# Table 250.66 and Table 250.102(C)(1) are numerically IDENTICAL for every row
+# through "Over 600 through 1100" copper -- verified against the 2023 text. They
+# diverge only ABOVE that row, so the shared rows live here once and the two
+# lookups differ only in what they do when they fall off the end.
+# Columns: (largest ungrounded Cu, largest ungrounded Al, value Cu, value Al)
+T250_SHARED_ROWS = [
+    ("2 AWG",      "1/0 AWG",    "8 AWG",   "6 AWG"),
+    ("1/0 AWG",    "3/0 AWG",    "6 AWG",   "4 AWG"),
+    ("3/0 AWG",    "250 kcmil",  "4 AWG",   "2 AWG"),
+    ("350 kcmil",  "500 kcmil",  "2 AWG",   "1/0 AWG"),
+    ("600 kcmil",  "900 kcmil",  "1/0 AWG", "3/0 AWG"),
+    ("1100 kcmil", "1750 kcmil", "2/0 AWG", "4/0 AWG"),
+]
+T250_66_ABOVE = ("3/0 AWG", "250 kcmil")   # 250.66 stops flat; it never escalates
+SBJ_PCT_ABOVE = 0.125                      # 250.102(C)(1) Note 1: 12-1/2 percent
+
+# Table 250.122 -- minimum EGC by the rating of the OCPD ahead of the equipment.
+T250_122 = [
+    (15, "14 AWG", "12 AWG"), (20, "12 AWG", "10 AWG"), (60, "10 AWG", "8 AWG"),
+    (100, "8 AWG", "6 AWG"), (200, "6 AWG", "4 AWG"), (300, "4 AWG", "2 AWG"),
+    (400, "3 AWG", "1 AWG"), (500, "2 AWG", "1/0 AWG"), (600, "1 AWG", "2/0 AWG"),
+    (800, "1/0 AWG", "3/0 AWG"), (1000, "2/0 AWG", "4/0 AWG"),
+    (1200, "3/0 AWG", "250 kcmil"), (1600, "4/0 AWG", "350 kcmil"),
+    (2000, "250 kcmil", "400 kcmil"), (2500, "350 kcmil", "600 kcmil"),
+    (3000, "400 kcmil", "600 kcmil"), (4000, "500 kcmil", "750 kcmil"),
+    (5000, "700 kcmil", "1250 kcmil"), (6000, "800 kcmil", "1250 kcmil"),
+]
 
 _COL = {("cu", 60): 1, ("cu", 75): 2, ("al", 60): 3, ("al", 75): 4}
 
@@ -224,13 +247,112 @@ def secondary_ocpd_size(fla_sec, panel_bus, cont_load_amps):
     return amp, note, flags
 
 
+def _cmil(label):
+    """Circular mil area of a conductor label.
+
+    'N kcmil' is parsed arithmetically (N x 1000 by definition) so every kcmil
+    size resolves, including row bounds like 1100 that are not standard conductor
+    sizes. An unresolvable label RAISES rather than returning 0: a 0 would sort
+    below every row and silently return the smallest value in the table, which is
+    the worst possible failure mode for a sizing calculator.
+    """
+    if label in CMIL:
+        return CMIL[label]
+    if isinstance(label, str) and label.strip().endswith("kcmil"):
+        try:
+            return int(round(float(label.split()[0]) * 1000))
+        except (ValueError, IndexError):
+            pass
+    raise ValueError("unknown conductor size %r - cannot resolve circular mil area" % (label,))
+
+
+def _shared_row(cond_label, conductor):
+    """Walk the rows shared by 250.66 and 250.102(C)(1) by circular mil AREA.
+
+    Comparing by area (not by an index into the ampacity table) is what keeps
+    aluminum correct: a 1000 kcmil conductor is genuinely larger than the
+    900 kcmil row bound, and an index-rank comparison gets that backwards.
+    """
+    area = _cmil(cond_label)
+    for cu_up, al_up, val_cu, val_al in T250_SHARED_ROWS:
+        if area <= _cmil(cu_up if conductor == "cu" else al_up):
+            return val_cu if conductor == "cu" else val_al
+    return None
+
+
 def gec_size(cond_label, conductor):
-    rank = AREA_RANK.get(cond_label, 0)
-    for cu_up, al_up, gec_cu, gec_al in T250_66:
-        cap = AREA_RANK.get(cu_up if conductor == "cu" else al_up, 999)
-        if rank <= cap:
-            return gec_cu if conductor == "cu" else gec_al
-    return "3/0 AWG" if conductor == "cu" else "250 kcmil"
+    """Table 250.66. Above the last row it is a FLAT cap -- 250.66 never escalates.
+
+    The 250.66(A)/(B)/(C) electrode caps (6 AWG to a rod, 4 AWG to a
+    concrete-encased electrode, ring size to a ground ring) are NOT applied here;
+    they depend on the electrode type and on the run not continuing on to another
+    electrode, neither of which this script asks about yet.
+    """
+    hit = _shared_row(cond_label, conductor)
+    if hit:
+        return hit
+    return T250_66_ABOVE[0] if conductor == "cu" else T250_66_ABOVE[1]
+
+
+def sbj_size(cond_label, conductor):
+    """Table 250.102(C)(1) -- system and supply-side bonding jumpers.
+
+    Identical to 250.66 through the 1100 kcmil row. Above it, Note 1 requires
+    12-1/2 percent of the ungrounded area with no ceiling, except that the jumper
+    is never required to be larger than the ungrounded conductor itself.
+    """
+    hit = _shared_row(cond_label, conductor)
+    if hit:
+        return hit
+    area = _cmil(cond_label)
+    need = area * SBJ_PCT_ABOVE
+    for s in CMIL_ORDER:
+        if CMIL[s] >= need:
+            return s if CMIL[s] <= area else cond_label
+    return cond_label
+
+
+def egc_size(ocpd_amps, conductor):
+    """Table 250.122. Column 1 is 'not exceeding', so take the first row >= OCPD."""
+    if ocpd_amps is None:
+        return None
+    for amps, cu, al in T250_122:
+        if ocpd_amps <= amps:
+            return cu if conductor == "cu" else al
+    return T250_122[-1][1] if conductor == "cu" else T250_122[-1][2]
+
+
+def egc_increase(table_egc, baseline_cond, installed_cond, circuit_cond, conductor):
+    """250.122(B) proportional increase, then the 250.122(A) cap.
+
+    If the ungrounded conductors were installed larger than the minimum with
+    sufficient ampacity, the EGC grows in proportion to circular mil area. The
+    comparison is done by integer cross-multiplication rather than a float ratio:
+    the margins are single-digit circular mils (a documented 50 A case fails
+    6 AWG by 2 cmil) and rounding error flips the answer.
+
+    Returns (size, note); note is None when nothing changed.
+    """
+    if table_egc is None:
+        return None, None
+    base, inst = _cmil(baseline_cond), _cmil(installed_cond)
+    if not base or inst <= base:
+        return table_egc, None
+    need_num = _cmil(table_egc) * inst           # required area = table * (inst/base)
+    chosen = CMIL_ORDER[-1]
+    for s in CMIL_ORDER:
+        if CMIL[s] * base >= need_num:           # integer compare, no float ratio
+            chosen = s
+            break
+    if _cmil(chosen) <= _cmil(table_egc):
+        return table_egc, None
+    note = ("250.122(B): ungrounded conductors upsized %s -> %s (%d -> %d cmil), so the EGC "
+            "grows in proportion: %s -> %s." % (baseline_cond, installed_cond, base, inst,
+                                                table_egc, chosen))
+    if _cmil(chosen) > _cmil(circuit_cond):      # 250.122(A)
+        return circuit_cond, note + (" Capped at the circuit conductor (%s) per 250.122(A)."
+                                     % circuit_cond)
+    return chosen, note
 
 
 def _is_wye(label):
@@ -319,6 +441,12 @@ def main():
     p.add_argument("--load-tag", default="LP", help="downstream (secondary) panel tag")
     p.add_argument("--primary-conn", default=None, help="primary connection label (e.g. Delta); default inferred")
     p.add_argument("--secondary-conn", default=None, help="secondary connection label (e.g. Y); default inferred")
+    p.add_argument("--egc-baseline", choices=["load", "ocpd"], default="load",
+                   help="250.122(B) baseline. 'load' (default) = minimum conductor for the "
+                        "calculated load, the conservative reading; 'ocpd' = minimum conductor "
+                        "for the selected OCPD, which treats an OCPD-driven upsize as no "
+                        "increase. The 2020/2023 text deleted the baseline phrase and sources "
+                        "genuinely split on this")
     p.add_argument("--sds", choices=["auto", "yes", "no"], default="auto",
                    help="separately derived system (250.30). auto = infer from the connection; "
                         "pass 'no' for a Y-Y with a factory H0-X0 neutral link")
@@ -385,6 +513,7 @@ def main():
     pri_base_amp = fla_p * 1.25                                   # continuous feeder, 215.2
     pri_parallel = pri_base_amp > big
     pri_cond, pri_amp = size_conductor(pri_base_amp, args.conductor, term)
+    pri_cond_min = pri_cond          # minimum with sufficient ampacity: 250.122(B) baseline
 
     if pri_parallel:
         flags.append(f"Primary feeder needs {pri_base_amp:.0f}A > largest first-pass single conductor "
@@ -458,9 +587,51 @@ def main():
                      f"won't trip until {os_amp}A). Fine if design load stays under {fla_s:.0f}A; otherwise go "
                      f"up one transformer size.")
 
-    # --- grounding (250.30) --------------------------------------------------
+    # --- EGCs (250.122) ------------------------------------------------------
+    # Load side of an OCPD -> Table 250.122 on that device. The primary feeder
+    # always has one; the secondary feeder only exists downstream of a secondary
+    # OCPD (with primary-only protection the secondary stays supply-side).
+    def _egc_for(ocpd_amp, cond_min, cond_installed):
+        table_egc = egc_size(ocpd_amp, args.conductor)
+        if args.egc_baseline == "ocpd" and ocpd_amp is not None:
+            base_cond = size_conductor(ocpd_amp, args.conductor, term)[0]
+        else:
+            base_cond = cond_min
+        return egc_increase(table_egc, base_cond, cond_installed, cond_installed, args.conductor)
+
+    pri_egc, pri_egc_note = _egc_for(op_amp, pri_cond_min, pri_cond)
+    if pri_egc_note:
+        flags.append("PRIMARY " + pri_egc_note)
+    if op_amp is None:
+        flags.append("Primary EGC cannot be sized: the primary OCPD is below the smallest "
+                     "standard breaker, so size the EGC on the UPSTREAM branch device (250.122).")
+
+    sec_egc = sec_egc_note = None
+    if sec_ocpd:
+        sec_min_amp = (cont_sec_amps * 1.25) if cont_sec_amps is not None else fla_s * 1.25
+        sec_cond_min = size_conductor(sec_min_amp, args.conductor, term)[0]
+        sec_egc, sec_egc_note = _egc_for(os_amp, sec_cond_min, sec_cond)
+        if sec_egc_note:
+            flags.append("SECONDARY " + sec_egc_note)
+    else:
+        flags.append("Primary-only protection: there is no secondary OCPD, so the secondary run "
+                     "is supply-side its whole length and carries a supply-side bonding jumper "
+                     "per 250.102(C), NOT a 250.122 EGC.")
+    if pri_parallel or sec_parallel:
+        flags.append("PARALLEL sets: 250.122(F) requires a FULL-SIZE EGC in each raceway, sized "
+                     "on the OCPD for the whole parallel set - not divided between raceways. The "
+                     "250.122(A) cap also uses the SUM of the paralleled phase areas. Verify by hand.")
+
+    # --- grounding & bonding (250.30) ----------------------------------------
+    # GEC -> 250.66 via 250.30(A)(5).  SBJ -> Table 250.102(C)(1) via the chain
+    # 250.30(A)(1) -> 250.28(D)(1) (250.30(A)(1) never names the table itself).
+    # SSBJ -> 250.102(C) via 250.30(A)(2), on the derived ungrounded conductors.
     gec = gec_size(sec_cond, args.conductor)
-    sbj = gec
+    sbj = sbj_size(sec_cond, args.conductor)
+    ssbj = sbj_size(sec_cond, args.conductor)
+    assumptions.append("SSBJ assumed required: transformer and first disconnecting means taken "
+                       "as separate enclosures. If the unit has an integral secondary main, "
+                       "there is no separate supply-side bonding jumper run.")
 
     # --- K factor ------------------------------------------------------------
     kf, kf_note = k_factor(args.nonlinear_pct)
@@ -514,7 +685,8 @@ def main():
                     "ocpd": op_amp, "ocpd_pct": op_pct, "ocpd_note": op_note,
                     "conductor": pri_cond, "conductor_amp": pri_amp,
                     "conductor_method": pri_method, "parallel": pri_parallel,
-                    "material": args.conductor.upper(), "term": term, "tap": args.primary_tap},
+                    "material": args.conductor.upper(), "term": term, "tap": args.primary_tap,
+                    "egc": pri_egc, "egc_note": pri_egc_note},
         "secondary": {"v_label": sec_v_label, "v": args.secondary_v, "phase": args.secondary_phase,
                       "conn": sec_conn, "fla": round(fla_s, 1),
                       "ocpd": os_amp, "ocpd_note": os_note,
@@ -522,8 +694,10 @@ def main():
                       "conductor_basis": sec_basis, "parallel": sec_parallel,
                       "material": args.conductor.upper(), "term": term,
                       "panel_bus": args.panel_bus, "tap_rule": tap_name,
-                      "cont_load": round(cont_sec_amps, 1) if cont_sec_amps is not None else None},
-        "grounding": {"sbj": sbj if sds else None, "gec": gec if sds else None, "sds": sds},
+                      "cont_load": round(cont_sec_amps, 1) if cont_sec_amps is not None else None,
+                      "egc": sec_egc, "egc_note": sec_egc_note},
+        "grounding": {"sbj": sbj if sds else None, "gec": gec if sds else None, "sds": sds,
+                      "ssbj": ssbj},
         "install": (">112.5 kVA: 1-hr fire-rated room (450.21(B))" if kva > 112.5
                     else "<=112.5 kVA: 12 in from combustibles (450.21(A))"),
         "assumptions": assumptions, "flags": flags,
@@ -555,23 +729,34 @@ def main():
     else:
         print("Secondary OCPD:    none (primary-only)")
     print("-" * 66)
-    print(f"Primary feeder:    {pri_cond} {args.conductor.upper()} ({term}C amp {pri_amp}A)")
+    pri_egc_disp = f"{pri_egc} EGC" if pri_egc else "EGC per upstream device"
+    print(f"Primary feeder:    {pri_cond} {args.conductor.upper()} ({term}C amp {pri_amp}A) "
+          f"+ {pri_egc_disp}")
     print(f"                   basis: {pri_method}; conductor >=125% FLA ({pri_base_amp:.1f}A)")
-    print(f"Secondary cond.:   {sec_cond} {args.conductor.upper()} ({term}C amp {sec_amp}A)")
+    print(f"                   EGC:   Table 250.122 on the {op_disp} primary OCPD")
+    sec_egc_disp = f" + {sec_egc} EGC" if sec_egc else ""
+    print(f"Secondary cond.:   {sec_cond} {args.conductor.upper()} ({term}C amp {sec_amp}A)"
+          f"{sec_egc_disp}")
     print(f"                   basis: {sec_basis}")
+    if sec_egc:
+        print(f"                   EGC:   Table 250.122 on the {os_amp} A secondary OCPD "
+              f"(load side of the first disconnecting means)")
     if tap_name != "n/a":
         print(f"Tap rule:          {tap_name}")
         print(f"                   {tap_note}")
     print("-" * 66)
     if sds:
         print("GROUNDING (separately derived system, 250.30):")
-        print(f"  System bonding jumper:   {sbj}  (Table 250.102(C)(1))")
-        print(f"  Grounding electrode cond:{gec}  (Table 250.66)")
+        print(f"  System bonding jumper:   {sbj}  (250.30(A)(1) -> 250.28(D)(1) -> T250.102(C)(1))")
+        print(f"  Grounding electrode cond:{gec}  (250.30(A)(5) -> Table 250.66)")
         print("  Bond N-G at ONE point (transformer OR secondary disconnect, not both)")
     else:
         print("GROUNDING (NOT separately derived -- 250.30 does NOT apply):")
         print("  No SBJ and no GEC at the transformer; the secondary neutral stays bonded")
-        print("  to the supply system. Run an EGC with the secondary conductors (250.122).")
+        print(f"  to the supply system. Secondary feeder EGC: {sec_egc or 'n/a'} (Table 250.122).")
+    print(f"  Supply-side bonding jmp: {ssbj}  (250.30(A)(2) -> 250.102(C))")
+    print("  SSBJ runs transformer -> first disconnecting means; on the supply side of")
+    print("  the secondary OCPD it is a bonding jumper, NOT a 250.122 EGC.")
     print("=" * 66)
     print("ASSUMPTIONS:")
     for a in assumptions:

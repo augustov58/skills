@@ -136,10 +136,14 @@ def main():
     # ---- primary feeder callout ----
     pc = (f'PARALLEL sets - size by hand' if pri["parallel"]
           else f'{pri["conductor"]} {pri["material"]} ({pri["term"]}\u00b0C, {pri["conductor_amp"]} A)')
+    pri_egc = pri.get("egc")
+    if pri_egc:
+        pc += f' + {pri_egc} EGC'
     s.append(callout((y_src_bot + y_pri_ocpd)//2, [
         ("PRIMARY FEEDER", ACCENT, 11, 700),
         (pc, INK, 13, 600),
-        (f'{pri["fla"]} A FLA \u00d7125%; ' + ("tap 240.21(B)" if pri["tap"] else "240.4 / 240.4(B)"), CITE, 11, 400),
+        (f'{pri["fla"]} A FLA \u00d7125%; ' + ("tap 240.21(B)" if pri["tap"] else "240.4 / 240.4(B)")
+         + ("; EGC 250.122" if pri_egc else ""), CITE, 11, 400),
     ]))
 
     # ---- primary OCPD ----
@@ -190,10 +194,13 @@ def main():
     # ---- secondary feeder callout ----
     scd = ('PARALLEL sets - size by hand' if sec["parallel"]
            else f'{sec["conductor"]} {sec["material"]} ({sec["term"]}\u00b0C, {sec["conductor_amp"]} A)')
+    sec_egc = sec.get("egc")
+    if sec_egc:
+        scd += f' + {sec_egc} EGC'
     s.append(callout((y_sec_ocpd + y_load_top)//2, [
         ("SECONDARY FEEDER", SEC, 11, 700),
         (scd, INK, 13, 600),
-        (sec.get("tap_rule") or "240.21(C)", CITE, 11, 400),
+        ((sec.get("tap_rule") or "240.21(C)") + ("; EGC 250.122" if sec_egc else ""), CITE, 11, 400),
     ]))
 
     # ---- load panel ----
