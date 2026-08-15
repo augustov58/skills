@@ -77,6 +77,8 @@ The script gives numbers; these need a confirmation against `references/nec-requ
 - **Grounding (250.30)** — script sizes the system bonding jumper and GEC, but only when it concludes the system is separately derived. Resolve the **Y-Y flag** if it fires: confirm the nameplate and rerun with `--sds no` for a factory H0-X0 link, which drops the SBJ/GEC and the riser's ground branch entirely. When it is an SDS, you still decide *where* the single N-G bond lands (transformer vs. secondary disconnect, never both) and confirm the electrode (building steel / water pipe within 5 ft of entry).
 - **Primary OCPD basis / inrush** — script defaults to 125% and couples the conductor. If the user reports (or you expect) energization nuisance trips on a high-efficiency/K-rated unit, rerun with `--primary-basis inrush`: the breaker rises toward 250% **and the primary conductor is upsized to match** (240.4). Never present a >125% primary breaker on a 125%-sized conductor — that was the old bug. The alternative to upsizing is a high-instantaneous device (D-curve MCB / adjustable-magnetic MCCB set above 8–12× FLA) left at 125% thermal.
 - **Panelboard (408.36)** — pass `--panel-bus`; the script caps the secondary OCPD at the bus and flags the capacity mismatch if the transformer FLA is below the bus. Confirm the panel main ≤ bus rating.
+- **EGC proportional increase (250.122(B))** — fires when the ungrounded conductors were installed larger than the minimum with sufficient ampacity, which is exactly what `--primary-basis inrush` does. The 2020/2023 text deleted the baseline phrase and the sources genuinely split, so the script defaults to `--egc-baseline load` (conservative: baseline = minimum conductor for the load) and prints which position produced the number. `--egc-baseline ocpd` treats an OCPD-driven upsize as no increase. On the 75 kVA example the two give **2/0** vs **4 AWG** — state which you used.
+- **Supply-side vs load-side (250.102(C) vs 250.122)** — the boundary is the **first disconnecting means**, and 240.21(C) forces that device to be an OCPD on a tapped secondary, so it is normally the secondary main. Upstream of it the run carries an SSBJ per 250.102(C); downstream it carries a 250.122 EGC. Under `--secondary-ocpd no` there is no downstream EGC at all. The script assumes the transformer and the first disconnect are in **separate enclosures** and states that assumption — say so, or correct it if the unit has an integral secondary main.
 
 Read `references/sizing-methodology.md` for the *why* when the user pushes back: temperature-rise classes, DOE 2016 efficiency, impedance/inrush physics, ambient/altitude/harmonic derating.
 
@@ -93,9 +95,10 @@ Default deliverable: a markdown schedule the user can drop into a one-line or su
 - Primary FLA:       90.2 A     Secondary FLA: 208.2 A
 - Primary OCPD:      125 A   (Table 450.3(B), 125% basis; coupled to 2 AWG feeder per 240.4(B))
 - Secondary OCPD:    225 A   (capped at panel bus, 408.36; ≤260 A 450.3(B) max; ≥125%×180 A cont)
-- Primary feeder:    2 AWG Cu + #6 EGC   (75°C, verify derating)
-- Secondary cond.:   4/0 Cu, 240.21(C)(2) 10-ft   (sized to the 225 A OCPD, not 125% nameplate)
-- Grounding (SDS):   SBJ #2 per 250.102(C)(1); GEC #2 per 250.66 to bldg steel; bond at xfmr ONLY
+- Primary feeder:    2 AWG Cu + 6 AWG EGC   (EGC per Table 250.122 on the 125 A OCPD)
+- Secondary cond.:   4/0 Cu + 4 AWG EGC, 240.21(C)(2) 10-ft   (sized to the 225 A OCPD, not 125% nameplate)
+- Grounding (SDS):   SBJ 2 AWG per 250.30(A)(1)→250.28(D)(1)→T250.102(C)(1); GEC 2 AWG per
+                     250.30(A)(5)→250.66 to bldg steel; SSBJ 2 AWG per 250.30(A)(2); bond at xfmr ONLY
 - Install:           ≤112.5 kVA → 12 in clearance (450.21(A))
 - Assumptions:       spare, 75°C term, Cu, ambient, primary-basis=min — all listed explicitly
 ```
