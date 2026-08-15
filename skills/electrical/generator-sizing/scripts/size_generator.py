@@ -48,6 +48,29 @@ DIP_STARTABLE_RATIO = {
     35: 0.85, 30: 0.75, 25: 0.70, 20: 0.65, 15: 0.45, 10: 0.30,
 }
 
+
+def dip_startable_ratio(dip_target_pct):
+    """Ratio for a dip target, snapping to the next STRICTER tabulated row.
+
+    An untabulated target must never silently fall back to the 20% factor: a
+    tighter dip needs a SMALLER ratio (bigger alternator), not the default.
+    Returns (ratio, note); note is None only on an exact table hit.
+    """
+    if dip_target_pct in DIP_STARTABLE_RATIO:
+        return DIP_STARTABLE_RATIO[dip_target_pct], None
+    stricter = [d for d in DIP_STARTABLE_RATIO if d <= dip_target_pct]
+    if stricter:
+        row = max(stricter)
+        return DIP_STARTABLE_RATIO[row], (
+            f"dip_target_pct {dip_target_pct}% is not tabulated; used the {row}% row "
+            f"(ratio {DIP_STARTABLE_RATIO[row]}), the next stricter value. Confirm on the "
+            f"OEM motor-starting curve.")
+    row = min(DIP_STARTABLE_RATIO)
+    return DIP_STARTABLE_RATIO[row], (
+        f"dip_target_pct {dip_target_pct}% is BELOW the {row}% table floor, so ratio "
+        f"{DIP_STARTABLE_RATIO[row]} is OPTIMISTIC at this target. Size against the OEM "
+        f"motor-starting curve before issuing.")
+
 STANDARD_SIZES_KW = [
     20, 25, 30, 35, 40, 50, 60, 80, 100, 125, 150, 175, 200, 230, 250, 300,
     350, 400, 450, 500, 600, 750, 800, 1000, 1250, 1500, 1750, 2000, 2250,
@@ -144,7 +167,7 @@ def size(loads, gen_pf=GEN_PF, dip_target_pct=20, altitude_ft=0, ambient_c=25,
         peak_kw = base_kw + worst["applied_skva"] * spf
 
     # Constraint sizing
-    ratio = DIP_STARTABLE_RATIO.get(dip_target_pct, 0.65)
+    ratio, dip_ratio_note = dip_startable_ratio(dip_target_pct)
     c_a_kw = running_kw / gen_pf                 # (a) running kW need (engine), as genset kW
     c_b_kw = running_kva * gen_pf                # (b) alternator thermal need, as genset kW
     min_gen_kva_for_start = (worst["applied_skva"] / ratio) if worst else 0.0
@@ -253,6 +276,7 @@ def size(loads, gen_pf=GEN_PF, dip_target_pct=20, altitude_ft=0, ambient_c=25,
         "wet_stacking_warning": wet_stacking_warning,
         "mitigation_options": mitigation_options,
         "dip_target_pct": dip_target_pct,
+        "dip_ratio_note": dip_ratio_note,
         "load_detail": detail,
         "note_paralleling": None if chosen else "Required kW exceeds 3000 kW catalog max; consider paralleling multiple sets.",
     }
@@ -311,8 +335,14 @@ def main():
           f"Transient need (no spare): {result['required_transient_kw']} kW")
     print(f"Required (pre-derate): {result['required_kw_pre_derate']} kW")
     print(f"Derate factor:        {result['altitude_derate']*result['harmonic_derate']:.3f}")
-    print(f">>> RECOMMENDED SIZE:  {result['recommended_standard_size_kw']} kW (standby rating), "
-          f"running load factor {result['load_factor_on_recommended']*100:.0f}%")
+    if result["recommended_standard_size_kw"]:
+        print(f">>> RECOMMENDED SIZE:  {result['recommended_standard_size_kw']} kW (standby rating), "
+              f"running load factor {result['load_factor_on_recommended']*100:.0f}%")
+    else:
+        print(f">>> RECOMMENDED SIZE:  exceeds the {STANDARD_SIZES_KW[-1]} kW catalog max "
+              f"({result['required_kw_after_derate']} kW required) -- see note below")
+    if result["dip_ratio_note"]:
+        print(f"!!! DIP TARGET: {result['dip_ratio_note']}")
     if result["wet_stacking_warning"]:
         print(f"!!! WET STACKING: {result['wet_stacking_warning']}")
     if result["mitigation_options"]:
