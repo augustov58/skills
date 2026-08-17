@@ -1,0 +1,60 @@
+{
+  "project": "Example one-line -- service to a 208V branch panel",
+  "fault_type": "3phase",
+  "source": {
+    "type": "transformer",
+    "tag": "X1 service",
+    "kva": 1500,
+    "phase": 3,
+    "secondary_voltage": 480,
+    "percent_z": 3.5,
+    "z_tolerance": "high",
+    "utility_voltage": "nominal"
+  },
+  "motor_contribution": {
+    "fraction_of_source_fla": 0.5,
+    "multiplier": 4
+  },
+  "segments": [
+    {
+      "tag": "X2 MDP",
+      "type": "conductor",
+      "length_ft": 25,
+      "size": "500",
+      "conductor": "cu",
+      "per_phase": 6,
+      "conduit": "steel",
+      "arrangement": "single",
+      "voltage_class": "600"
+    },
+    {
+      "tag": "X3 MCC-1",
+      "type": "conductor",
+      "length_ft": 120,
+      "size": "4/0",
+      "conductor": "al",
+      "per_phase": 2,
+      "conduit": "nonmagnetic",
+      "arrangement": "cable",
+      "voltage_class": "600"
+    },
+    {
+      "tag": "X4 busway tap",
+      "type": "busway",
+      "length_ft": 80,
+      "ampacity": 1000,
+      "busway_type": "feeder",
+      "conductor": "cu"
+    },
+    {
+      "tag": "X5 panel LP-1",
+      "type": "transformer",
+      "kva": 75,
+      "phase": 3,
+      "primary_voltage": 480,
+      "secondary_voltage": 208,
+      "percent_z": 2.4,
+      "z_tolerance": "high"
+    }
+  ]
+}
